@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Simple Finance Tool</title>
+  <style>
+    body { font-family: Inter, system-ui, sans-serif; margin: 20px; color: #0F172A; background: #fff; }
+    h1 { font-size: 1.6rem; margin-bottom: 6px; }
+    .small { color: #64748B; font-size: 0.9rem; }
+    .card { border: 1px solid #E2E8F0; border-radius: 12px; padding: 16px; background: #fff; margin-bottom: 16px; }
+    label { display:block; font-size: 0.9rem; margin: 10px 0 6px; color: #334155; }
+    input, select, textarea { width: 100%; padding: 10px; border: 1px solid #CBD5E1; border-radius: 8px; font-size: 1rem; }
+    button { padding: 10px 14px; border: none; border-radius: 10px; background: #2563EB; color: #fff; cursor: pointer; font-weight: 600; }
+    button:hover { background: #1E40AF; }
+    .btn-outline { background: #fff; color: #2563EB; border: 1px solid #2563EB; }
+    .btn-outline:hover { background: #F1F5F9; }
+    table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+    th, td { border-bottom: 1px solid #E2E8F0; padding: 8px; text-align: left; font-size: 0.95rem; }
+    td.amount { text-align: right; }
+    .totals { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 12px; }
+    .chip { background: #F8FAFC; padding: 8px 12px; border-radius: 999px; font-weight: 600; }
+    .toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: #111827; color: #fff; padding: 10px 14px; border-radius: 10px; font-size: 0.95rem; opacity: 0; pointer-events: none; transition: opacity .2s; }
+    .toast.show { opacity: 1; pointer-events: auto; }
+    #feedbackModal { max-width:500px; width:90%; display:none; position:fixed; top:20%; left:50%; transform:translateX(-50%); z-index:1000; background:#fff; box-shadow:0 4px 12px rgba(0,0,0,0.2); border-radius:12px; padding:16px; }
+    #overlay {
+      display: none;
+      position: fixed;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      background: rgba(0,0,0,0.5);
+      z-index: 900; /* just below the modal */
+    }
+    .grid { display: grid; grid-template-columns: 1fr; gap: 16px; }
+    @media (min-width: 900px) { .grid { grid-template-columns: 1fr 1fr; } }
+  </style>
+</head>
+<body>
+  <h1>Simple finance tool</h1>
+  <p class="small">Your data is stored locally on this device. Export/Import to move between devices. Send feedback anytime.</p>
+
+  <div class="card">
+    <h2>Data controls</h2>
+    <button id="exportJsonBtn">Export JSON</button>
+    <button id="exportCsvBtn" class="btn-outline">Export CSV</button>
+    <input type="file" id="importFile" accept="application/json" style="display:none">
+    <button id="importJsonBtn" class="btn-outline">Import JSON</button>
+    <button id="resetBtn" style="background:#EF4444;">Reset all data</button>
+    <button id="feedbackBtn" class="btn-outline">Send Feedback</button>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Add invoice</h2>
+      <label>Date</label><input type="date" id="invDate">
+      <label>Client</label><input type="text" id="invClient">
+      <label>Description</label><input type="text" id="invDesc">
+      <label>Amount</label><input type="number" id="invAmt" step="0.01">
+      <button id="addInvoiceBtn">Add invoice</button>
+      <table id="invoiceTable"><thead><tr><th>Date</th><th>Client</th><th>Description</th><th>Amount</th><th></th></tr></thead><tbody></tbody></table>
+    </div>
+
+    <div class="card">
+      <h2>Add expense</h2>
+      <label>Date</label><input type="date" id="expDate">
+      <label>Category</label><select id="expCat"><option>Software</option><option>Equipment</option><option>Travel</option><option>Other</option></select>
+      <label>Description</label><input type="text" id="expDesc">
+      <label>Amount</label><input type="number" id="expAmt" step="0.01">
+      <button id="addExpenseBtn">Add expense</button>
+      <table id="expenseTable"><thead><tr><th>Date</th><th>Category</th><th>Description</th><th>Amount</th><th></th></tr></thead><tbody></tbody></table>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Totals</h2>
+    <div class="totals">
+      <div class="chip">Income: $<span id="incomeTotal">0.00</span></div>
+      <div class="chip">Expenses: $<span id="expenseTotal">0.00</span></div>
+      <div class="chip">Net: $<span id="netTotal">0.00</span></div>
+    </div>
+  </div>
+
+  <!-- Feedback Modal -->
+  <div id="feedbackModal" class="card">
+    <h2>Send Feedback</h2>
+    <label>Your name (optional)</label>
+    <input type="text" id="fbName">
+    <label>Your feedback</label>
+    <textarea id="fbMessage" rows="4"></textarea>
+    <div style="margin-top:12px; display:flex; gap:8px;">
+      <button id="fbSubmit">Submit</button>
+      <button id="fbCancel" class="btn-outline">Cancel</button>
+    </div>
+  </div>
+
+  <!-- 🔹 Overlay element -->
+  <div id="overlay"></div>
+
+  <div id="toast" class="toast"></div>
+
+  <script>
+  const money = v => (Number(v)||0).toFixed(2);
+  const load = k => JSON.parse(localStorage.getItem(k)||"[]");
+  const save = (k,v) => localStorage.setItem(k,JSON.stringify(v));
+  let invoices = load("invoices"), expenses = load("expenses");
+
+  function render(){
+    const invBody=document.querySelector("#invoiceTable tbody");
+    const expBody=document.querySelector("#expenseTable tbody");
+    invBody.innerHTML=""; expBody.innerHTML="";
+    let income=0, expTotal=0;
+    invoices.forEach((inv,i)=>{income+=+inv.amount||0;
+      invBody.innerHTML+=`<tr><td>${inv.date||""}</td><td>${inv.client||""}</td><td>${inv.desc||""}</td><td class="amount">$${money(inv.amount)}</td><td><button data-type="inv" data-i="${i}">x</button></td></tr>`});
+    expenses.forEach((ex,i)=>{expTotal+=+ex.amount||0;
+      expBody.innerHTML+=`<tr><td>${ex.date||""}</td><td>${ex.cat||""}</td><td>${ex.desc||""}</td><td class="amount">$${money(ex.amount)}</td><td><button data-type="exp" data-i="${i}">x</button></td></tr>`});
+    document.getElementById("incomeTotal").textContent=money(income);
+    document.getElementById("expenseTotal").textContent=money(expTotal);
+    document.getElementById("netTotal").textContent=money(income-expTotal);
+  }
+  render();
+
+  // Add invoice
+  addInvoiceBtn.onclick=()=>{
+    if(!invAmt.value) return toast("Amount required","error");
+    invoices.push({date:invDate.value,client:invClient.value.trim(),desc:invDesc.value.trim(),amount:invAmt.value});
+    save("invoices",invoices); render();
+    invClient.value=invDesc.value=invAmt.value="";
+  };
+
+  // Add expense
+  addExpenseBtn.onclick=()=>{
+    if(!expAmt.value) return toast("Amount required","error");
+    expenses.push({date:expDate.value,cat:expCat.value,desc:expDesc.value.trim(),amount:expAmt.value});
+    save("expenses",expenses); render();
+    expDesc.value=expAmt.value="";
+  };
+
+  // Delete rows
+  document.body.addEventListener("click",e=>{
+    if(e.target.tagName==="BUTTON" && e.target.dataset.type){
+      const {type,i}=e.target.dataset;
+      if(type==="inv"){ invoices.splice(i,1); save("invoices",invoices); }
+      if(type==="exp"){ expenses.splice(i,1); save("expenses",expenses); }
+      render();
+    }
+  });
+
+  // Export JSON
+  exportJsonBtn.onclick=()=>{
+    const data={invoices,expenses};
+    const blob=new Blob([JSON.stringify(data)],{type:"application/json"});
+    const a=document.createElement("a");
+    a.href=URL.createObjectURL(blob);
+    a.download="finance-data.json";
+    a.click();
+  };
+
+  // Export CSV
+  exportCsvBtn.onclick=()=>{
+    let csv="Type,Date,Client/Category,Description,Amount\n";
+    invoices.forEach(inv=>{csv+=`Invoice,${inv.date},${inv.client},${inv.desc},${inv.amount}\n`;});
+    expenses.forEach(ex=>{csv+=`Expense,${ex.date},${ex.cat},${ex.desc},${ex.amount}\n`;});
+    const blob=new Blob([csv],{type:"text/csv"});
+    const a=document.createElement("a");
+    a.href=URL.createObjectURL(blob);
+    a.download="finance-data.csv";
+    a.click();
+  };
+
+  // Import JSON
+  importJsonBtn.onclick=()=>importFile.click();
+  importFile.onchange=e=>{
+    const file=e.target.files[0]; if(!file) return;
+    const reader=new FileReader();
+    reader.onload=ev=>{
+      try{
+        const data=JSON.parse(ev.target.result);
+        invoices=data.invoices||[]; expenses=data.expenses||[];
+        save("invoices",invoices); save("expenses",expenses); render();
+        toast("Data imported","success");
+      }catch{ toast("Invalid file","error"); }
+    };
+    reader.readAsText(file);
+  };
+
+  // Reset
+  resetBtn.onclick=()=>{
+    if(confirm("Clear all data?")){
+      invoices=[]; expenses=[];
+      save("invoices",invoices); save("expenses",expenses);
+      render(); toast("All data cleared","success");
+    }
+  };
+
+  // Toast
+  function toast(msg,type){
+    const t=document.getElementById("toast");
+    t.textContent=msg;
+    t.style.background= type==="error" ? "#DC2626" : "#111827";
+    t.classList.add("show");
+    setTimeout(()=>t.classList.remove("show"),2000);
+  }
+
+  // ---- Feedback modal with overlay ----
+  const fbModal = document.getElementById("feedbackModal");
+  const fbBtn = document.getElementById("feedbackBtn");
+  const fbCancel = document.getElementById("fbCancel");
+  const fbSubmit = document.getElementById("fbSubmit");
+  const overlay = document.getElementById("overlay");
+
+  fbBtn.onclick = () => { 
+    fbModal.style.display = "block"; 
+    overlay.style.display = "block";
+  };
+
+  fbCancel.onclick = () => { 
+    fbModal.style.display = "none"; 
+    overlay.style.display = "none";
+  };
+
+  overlay.onclick = () => { 
+    fbModal.style.display = "none"; 
+    overlay.style.display = "none";
+  };
+
+  fbSubmit.onclick = () => {
+    const name = document.getElementById("fbName").value.trim();
+    const msg = document.getElementById("fbMessage").value.trim();
+    if (!msg) { toast("Please enter feedback","error"); return; }
+
+    const subject = encodeURIComponent("Finance Tool Feedback");
+    const body = encodeURIComponent((name ? `From: ${name}\n\n` : "") + msg);
+
+    // 👉 Your email is here
+    window.location.href = `mailto:isaac.b.scott12@gmail.com?subject=${subject}&body=${body}`;
+
+    fbModal.style.display = "none";
+    overlay.style.display = "none";
+    document.getElementById("fbName").value = "";
+    document.getElementById("fbMessage").value = "";
+    toast("Opening email client...","success");
+  };
+
+  // Optional: close modal with Esc key
+  document.addEventListener("keydown", e=>{
+    if(e.key==="Escape" && fbModal.style.display==="block"){
+      fbModal.style.display="none";
+      overlay.style.display="none";
+    }
+  });
+</script>
+</body>
+</html>
